@@ -1,0 +1,30 @@
+# Core deep learning framework
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Configuration and utilities
+omegaconf>=2.3.0
+tqdm>=4.65.0
+
+# Text processing and transformers
+transformers>=4.30.0
+tokenizers>=0.13.0
+
+# Audio processing
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# Experiment tracking
+wandb>=0.15.0
+
+# Diffusion models (optional - for Stage 2)
+# diffusers>=0.21.0
+# safetensors>=0.3.0
+
+# Distributed training (optional)
+# horovod>=0.28.0  # Alternative to torch.distributed
+
+# Development tools
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.0.0

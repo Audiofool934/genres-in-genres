@@ -1,0 +1,29 @@
+# Python caches / local tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# OS/editor noise
+.DS_Store
+.vscode/
+.idea/
+
+# Local app/state
+.gradio/
+
+# Project-specific generated data
+data/music/
+data/music_assets/
+
+# Scratch/experiments (not part of the core package)
+tmp/
+
