@@ -2,29 +2,27 @@
 
 # Set CUDA_VISIBLE_DEVICES FIRST, before any Python imports
 # This must be set before torch is imported
-export CUDA_VISIBLE_DEVICES=7
+export CUDA_VISIBLE_DEVICES=0
 
 # Get script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# From genres_in_genres/ to t2m/ is 4 levels up: ../../../../ (genres_in_genres -> data_science -> education -> docs -> t2m)
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../../" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
 
 # Change to subproject directory
 cd "$SCRIPT_DIR"
 
-# Ensure venv in project root
+# Ensure venv in subproject root
 if [ ! -d "$PROJECT_ROOT/venv" ]; then
     echo "Creating virtual environment..."
     python3 -m venv "$PROJECT_ROOT/venv"
     "$PROJECT_ROOT/venv/bin/pip" install --upgrade pip
-    "$PROJECT_ROOT/venv/bin/pip" install -r "$PROJECT_ROOT/requirements.txt" numpy matplotlib seaborn scikit-learn gradio
+    "$PROJECT_ROOT/venv/bin/pip" install -r "$PROJECT_ROOT/requirements.txt"
 fi
 
 echo "Starting Genres in Genres App..."
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 
-# Add project root to PYTHONPATH for accessing app.database
-# Current directory (genres_in_genres) is already in Python's path
+# Add current directory to PYTHONPATH
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
 # Default port (can be overridden by --port or GRADIO_PORT env var)

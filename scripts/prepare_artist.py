@@ -22,9 +22,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 # -----------------------------------------------------------------------------
 current_dir = os.path.dirname(os.path.abspath(__file__))  # .../scripts
 subproject_root = os.path.abspath(os.path.join(current_dir, ".."))  # .../genres_in_genres
-project_root = os.path.abspath(os.path.join(subproject_root, "../../../.."))  # .../t2m
 sys.path.insert(0, subproject_root)  # For src.xxx
-sys.path.insert(0, project_root)  # For pipeline_mulan
 
 
 _ILLEGAL_CHARS = r'\/:*?"<>|'
@@ -183,18 +181,10 @@ def encode_to_cache(
     cache_dir: str,
     device: str,
 ) -> None:
-    from src.library_manager import LibraryManager
-    from src.extractor import MuLanFeatureExtractor
-
-    manager = LibraryManager(data_dir, cache_dir)
-    extractor = MuLanFeatureExtractor(device=device)
-
-    career = manager.scan_artist(artist)
-    if not career.tracks:
-        raise RuntimeError(f"No tracks found for artist: {artist}")
-
-    extractor.process_career(career)
-    manager.save_to_cache(career)
+    raise RuntimeError(
+        "MuQ-MuLan embedding extraction has been removed from this project. "
+        "Use precomputed caches under data/cache/music or plug in your own extractor."
+    )
 
 
 def main() -> int:
@@ -211,7 +201,11 @@ def main() -> int:
     parser.add_argument("--no_rename", action="store_true", help="Skip renaming step")
     parser.add_argument("--verify", action="store_true", help="Validate mp3 decodability via ffmpeg")
     parser.add_argument("--workers", type=int, default=4, help="Parallel workers for validation")
-    parser.add_argument("--encode", action="store_true", help="Run MuQ-MuLan embedding extraction and cache")
+    parser.add_argument(
+        "--encode",
+        action="store_true",
+        help="(Disabled) MuQ-MuLan extraction was removed; caches in data/cache/music are precomputed.",
+    )
     args = parser.parse_args()
 
     artist_dir = os.path.join(args.data_dir, args.artist)
@@ -251,14 +245,14 @@ def main() -> int:
         print("[prepare_artist] Validation OK (all mp3 decoded successfully).")
 
     if args.encode:
-        print(f"[prepare_artist] Encoding to cache: artist={args.artist} device={args.device}")
-        encode_to_cache(args.artist, args.data_dir, args.cache_dir, device=args.device)
-        print("[prepare_artist] Done.")
+        print(
+            "[prepare_artist] Embedding extraction is disabled (MuQ-MuLan dependency removed).\n"
+            "Please use the precomputed caches under data/cache/music or provide a custom extractor."
+        )
+        return 4
 
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-

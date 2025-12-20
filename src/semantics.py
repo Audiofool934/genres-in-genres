@@ -1,69 +1,98 @@
 """
-Semantic Mapping Module.
+Semantic Mapping Module (cache-first, no MuQ-MuLan dependency).
 
-Maps audio embeddings to human-readable semantic tags (genres, moods, instruments)
-using the shared MuQ-MuLan embedding space. Tags are loaded from Music4All database.
+Uses precomputed MuQ-MuLan text embeddings stored under data/cache/tags to map
+audio embeddings to human-readable semantic tags.
 """
 from typing import List, Tuple, Optional, Dict
 import csv
 import pickle
 from collections import Counter
 from pathlib import Path
-import torch
-import torch.nn.functional as F
+
 import numpy as np
 
-from pipeline_mulan import MuQMuLanEncoder
 
 class SemanticMapper:
     """
-    Maintains a registry of semantic tags and their embeddings.
-    Tags are loaded from Music4All database instead of hardcoded lists.
-    Allows querying for the nearest semantic tags for a given audio embedding.
+    Maintains a registry of semantic tags and their cached embeddings.
+
+    Tag embeddings are expected to be precomputed offline and stored alongside
+    the tag list under data/cache/tags (see initialize_tags for details).
     """
-    
+
     def __init__(
-        self, 
-        encoder: MuQMuLanEncoder,
-        metadata_dir: str,
-        cache_dir: Optional[str] = None,
-        device: str = "cpu"
+        self,
+        cache_dir: str,
+        metadata_dir: Optional[str] = None,
     ):
-        self.encoder = encoder
-        self.device = device
+        self.cache_dir = Path(cache_dir)
+        self.metadata_dir = Path(metadata_dir) if metadata_dir else None
         self.tags: List[str] = []
-        self.tag_embeddings: Optional[torch.Tensor] = None
-        self.metadata_dir = metadata_dir
-        self.cache_dir = cache_dir
+        self.tag_embeddings: Optional[np.ndarray] = None
 
-    @staticmethod
-    def load_tags_from_cache(cache_path: str, max_tags: Optional[int] = None) -> Optional[List[str]]:
+    @property
+    def has_embeddings(self) -> bool:
+        return self.tag_embeddings is not None
+
+    def initialize_tags(self, max_tags: int = 2000, cache_filename: str = "tags_cache.pkl"):
         """
-        Load tags from cached pickle file.
-        
-        Args:
-            cache_path: Path to tags_cache.pkl file
-            max_tags: Optional limit on number of tags (if None, returns all cached tags)
-            
-        Returns:
-            List of tags, or None if cache doesn't exist
+        Load tags and (optionally) their embeddings from cache. Falls back to
+        metadata CSVs for tag list if cache is missing.
+
+        Cache formats supported:
+        - tags_cache.pkl with keys {"tags": [...], "embeddings": np.ndarray | list}
+        - Separate files in cache_dir: tag_embeddings.npy / tag_embeddings.pkl
         """
-        cache_file = Path(cache_path)
-        if not cache_file.exists():
-            return None
-        
-        with open(cache_file, "rb") as f:
-            data = pickle.load(f)
-        
-        tags = data.get("tags", [])
-        if max_tags is not None and len(tags) > max_tags:
+        cache_path = self.cache_dir / cache_filename
+        tags: List[str] = []
+        tag_embeddings: Optional[np.ndarray] = None
+
+        if cache_path.exists():
+            with cache_path.open("rb") as f:
+                data = pickle.load(f)
+            tags = data.get("tags", []) or []
+            tag_embeddings = data.get("embeddings") or data.get("tag_embeddings")
+
+        # Optional separate embedding file
+        if tag_embeddings is None:
+            npy_path = self.cache_dir / "tag_embeddings.npy"
+            pkl_path = self.cache_dir / "tag_embeddings.pkl"
+            if npy_path.exists():
+                tag_embeddings = np.load(npy_path)
+            elif pkl_path.exists():
+                with pkl_path.open("rb") as f:
+                    tag_embeddings = pickle.load(f)
+
+        # Fallback: load tag list from metadata if cache tags missing
+        if not tags and self.metadata_dir:
+            tags = self.load_tags_from_metadata(self.metadata_dir, max_tags=max_tags)
+
+        if max_tags and tags:
             tags = tags[:max_tags]
-            
-        print(f"[SemanticMapper] Loaded {len(tags)} tags from cache: {cache_path}")
-        return tags
+            if tag_embeddings is not None and len(tag_embeddings) >= len(tags):
+                tag_embeddings = tag_embeddings[: len(tags)]
+
+        if tag_embeddings is not None:
+            tag_embeddings = np.asarray(tag_embeddings, dtype=np.float32)
+            if tag_embeddings.shape[0] < len(tags):
+                print(
+                    f"[SemanticMapper] Tag embeddings shorter than tag list "
+                    f"({tag_embeddings.shape[0]} < {len(tags)}); disabling embeddings."
+                )
+                tag_embeddings = None
+            else:
+                tag_embeddings = self._l2_normalize(tag_embeddings)
+
+        self.tags = tags
+        self.tag_embeddings = tag_embeddings
+        print(
+            f"[SemanticMapper] Loaded {len(self.tags)} tags from cache "
+            f"(embeddings={'yes' if self.tag_embeddings is not None else 'no'})."
+        )
 
     @staticmethod
-    def load_tags_from_metadata(metadata_dir: str, max_tags: int = 2000) -> List[str]:
+    def load_tags_from_metadata(metadata_dir: Path, max_tags: int = 2000) -> List[str]:
         """
         Load tags from local Music4All metadata CSVs under `metadata_dir`.
 
@@ -100,53 +129,44 @@ class SemanticMapper:
         print(f"[SemanticMapper] Loaded {len(most_common)} tags from {md} (top {max_tags}).")
         return most_common
 
-    def initialize_tags(self, max_tags: int = 2000, cache_filename: str = "tags_cache.pkl"):
-        """
-        Load tags from cache (if available) or metadata CSVs, then encode them.
-        
-        Args:
-            max_tags: Maximum number of tags to load
-            cache_filename: Name of cache file to look for in cache_dir
-        """
-        tags = None
-        
-        # Try loading from cache first
-        if self.cache_dir:
-            cache_path = Path(self.cache_dir) / cache_filename
-            tags = self.load_tags_from_cache(str(cache_path), max_tags=max_tags)
-        
-        # Fallback to loading from metadata CSVs
-        if tags is None:
-            tags = self.load_tags_from_metadata(self.metadata_dir, max_tags=max_tags)
-        
-        self.register_tags(tags)
-
-    def register_tags(self, tags: List[str]):
-        """Encodes a list of tags and adds/updates the registry."""
-        new_tags = list(set(tags) - set(self.tags))
-        all_tags = self.tags + new_tags
-        
-        print(f"[SemanticMapper] Encoding {len(all_tags)} tags...")
-        with torch.no_grad():
-            embeddings = self.encoder.encode_text(all_tags)
-        
-        self.tags = all_tags
-        self.tag_embeddings = embeddings.to(self.device)
-        print(f"[SemanticMapper] Registry updated: {len(self.tags)} tags.")
+    @staticmethod
+    def _l2_normalize(x: np.ndarray) -> np.ndarray:
+        norms = np.linalg.norm(x, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        return x / norms
 
     def get_nearest_tags(self, embedding: np.ndarray, k: int = 3) -> List[Tuple[str, float]]:
         """Finds the top-k nearest tags for a given embedding vector."""
-        query = torch.from_numpy(embedding).to(self.device).float()
-        if query.dim() == 1:
-            query = query.unsqueeze(0)
-        
-        query = F.normalize(query, p=2, dim=1)
-        refs = F.normalize(self.tag_embeddings, p=2, dim=1)  # type: ignore
-        
-        sims = torch.mm(query, refs.t()).squeeze(0)
-        topk_sims, topk_indices = torch.topk(sims, k)
-        
-        return [(self.tags[idx], score) for score, idx in zip(topk_sims.tolist(), topk_indices.tolist())]
+        if self.tag_embeddings is None or not self.tags:
+            return []
+
+        query = np.asarray(embedding, dtype=np.float32).reshape(1, -1)
+        if query.shape[1] != self.tag_embeddings.shape[1]:
+            raise ValueError(
+                f"Embedding dimension mismatch: query {query.shape[1]} vs tags {self.tag_embeddings.shape[1]}"
+            )
+        query = self._l2_normalize(query)
+        sims = query @ self.tag_embeddings.T  # [1, N]
+        sims = sims.squeeze(0)
+        top_indices = np.argsort(-sims)[:k]
+        return [(self.tags[idx], float(sims[idx])) for idx in top_indices]
+
+    def get_tag_vectors(self, tags: List[str]) -> Optional[np.ndarray]:
+        """
+        Returns normalized embedding vectors for the requested tags.
+        If embeddings are unavailable or any tag is missing, returns None.
+        """
+        if self.tag_embeddings is None:
+            return None
+
+        tag_to_idx: Dict[str, int] = {t: i for i, t in enumerate(self.tags)}
+        missing = [t for t in tags if t not in tag_to_idx]
+        if missing:
+            print(f"[SemanticMapper] Missing tag embeddings for: {missing}")
+            return None
+
+        indices = [tag_to_idx[t] for t in tags]
+        return self.tag_embeddings[indices]
 
     def batch_annotate(self, embeddings: List[np.ndarray], k: int = 1) -> List[List[str]]:
         """Annotates a batch of embeddings with their top-k tags."""

@@ -26,21 +26,21 @@ class MusicMetrics:
         # We need to map track object to embedding
         # Ideally career.embeddings is aligned or we have a map
         # Let's rebuild map
-        # Use id() as key since Track objects are not hashable
-        track_to_vec = {id(e.track_ref): e.vector for e in career.embeddings}
+        # Use file_path as key for stable mapping
+        track_to_vec = {e.track_ref.file_path: e.vector for e in career.embeddings}
         
         track_bins = {}
         first_dates = {}
         
         for t in sorted_tracks:
-            track_id = id(t)
-            if track_id not in track_to_vec: continue
+            track_key = t.file_path
+            if track_key not in track_to_vec: continue
             
             if t.album not in track_bins:
                 track_bins[t.album] = []
                 first_dates[t.album] = t.release_date
             
-            track_bins[t.album].append(track_to_vec[track_id])
+            track_bins[t.album].append(track_to_vec[track_key])
             
         # Sort albums strictly by release date
         sorted_album_names = sorted(track_bins.keys(), key=lambda a: first_dates[a])
@@ -114,15 +114,15 @@ class MusicMetrics:
         """
         # We can reuse the logic from StyleAnalyzer or reimplement clean here
         # Let's reimplement for independence
-        # Use id() as key since Track objects are not hashable
-        track_to_vec = {id(e.track_ref): e.vector for e in career.embeddings}
+        # Use file_path as key for stable mapping
+        track_to_vec = {e.track_ref.file_path: e.vector for e in career.embeddings}
         
         album_vecs = {}
         for t in career.tracks:
-            track_id = id(t)
-            if track_id not in track_to_vec: continue
+            track_key = t.file_path
+            if track_key not in track_to_vec: continue
             if t.album not in album_vecs: album_vecs[t.album] = []
-            album_vecs[t.album].append(track_to_vec[track_id])
+            album_vecs[t.album].append(track_to_vec[track_key])
             
         results = {}
         for album, vecs in album_vecs.items():

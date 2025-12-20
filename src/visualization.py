@@ -174,10 +174,10 @@ class GenreTrajectoryVisualizer:
         if clusters and show_clusters:
             # Build index lookup: embedding index by track reference
             # Map track object id to embedding index
-            track_to_emb_idx = {id(emb.track_ref): idx for idx, emb in enumerate(analyzer.career.embeddings)}
+            track_to_emb_idx = {emb.track_ref.file_path: idx for idx, emb in enumerate(analyzer.career.embeddings)}
             for cid, track_list in clusters.items():
                 # Only include tracks that have embeddings
-                pts = [X_2d[track_to_emb_idx[id(t)]] for t in track_list if id(t) in track_to_emb_idx]
+                pts = [X_2d[track_to_emb_idx[t.file_path]] for t in track_list if t.file_path in track_to_emb_idx]
                 if not pts:
                     continue
                 pts_arr = np.vstack(pts)
@@ -264,7 +264,7 @@ class CareerStoryteller:
         sorted_cids = sorted(clusters.keys())
         for cid in sorted_cids:
             for t in clusters[cid]:
-                track_to_cluster[id(t)] = cid
+                track_to_cluster[t.file_path] = cid
                 
         data = np.zeros((len(sorted_cids), len(unique_albums)))
         
@@ -274,7 +274,7 @@ class CareerStoryteller:
             if total_tracks == 0: continue
             
             for emb in album_embeddings:
-                cid = track_to_cluster.get(id(emb.track_ref), -1)
+                cid = track_to_cluster.get(emb.track_ref.file_path, -1)
                 if cid != -1:
                     # Map cid to row index
                     row_idx = sorted_cids.index(cid)
@@ -386,20 +386,31 @@ class CareerStoryteller:
         """
         Compares specific albums on semantic dimensions using a radar chart.
         """
-        # 1. Get embeddings for tags
-        # Ensure tags are registered/encoded
-        if not set(tags).issubset(set(analyzer.mapper.tags)):
-            analyzer.mapper.register_tags(tags)
-        
-        # Get tag embeddings [K, 512]
-        import torch
-        import torch.nn.functional as F
-        
-        device = analyzer.mapper.device
-        with torch.no_grad():
-             tag_vecs = analyzer.mapper.encoder.encode_text(tags) # [K, 512]
-             tag_vecs = tag_vecs.to(device)  # Ensure tag_vecs is on the same device
-             tag_vecs = F.normalize(tag_vecs, p=2, dim=1)
+        mapper = analyzer.mapper
+        if mapper is None or not mapper.has_embeddings:
+            fig = plt.figure(figsize=(6, 4))
+            plt.text(
+                0.5,
+                0.5,
+                "Tag embeddings unavailable (SemanticMapper not loaded)",
+                ha="center",
+                va="center",
+            )
+            plt.axis("off")
+            return fig
+
+        tag_vecs = mapper.get_tag_vectors(tags)
+        if tag_vecs is None:
+            fig = plt.figure(figsize=(6, 4))
+            plt.text(
+                0.5,
+                0.5,
+                "Requested tags missing from cache",
+                ha="center",
+                va="center",
+            )
+            plt.axis("off")
+            return fig
         
         # 2. Setup Radar
         # Number of variables
@@ -421,13 +432,12 @@ class CareerStoryteller:
             
             vecs = np.stack([e.vector for e in album_embeddings])
             centroid = np.mean(vecs, axis=0)
+            norm = np.linalg.norm(centroid)
+            if norm > 0:
+                centroid = centroid / norm
             
-            # Score against tags
-            c_tensor = torch.from_numpy(centroid).unsqueeze(0).to(device) # [1, 512]
-            c_tensor = F.normalize(c_tensor, p=2, dim=1)
-            
-            # Sim: [1, K]
-            sims = torch.mm(c_tensor, tag_vecs.t()).squeeze(0).cpu().numpy()
+            # Similarity: [K]
+            sims = centroid @ tag_vecs.T
             
             values = sims.tolist()
             values += values[:1] # Close loop

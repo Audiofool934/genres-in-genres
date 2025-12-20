@@ -11,11 +11,9 @@ import argparse
 
 # Add project root to python path to allow absolute imports of 'src'
 current_dir = os.path.dirname(os.path.abspath(__file__)) # .../scripts
-subproject_root = os.path.abspath(os.path.join(current_dir, "..")) # .../genres_in_genres
-project_root = os.path.abspath(os.path.join(subproject_root, "../../../..")) # .../t2m
+subproject_root = os.path.abspath(os.path.join(current_dir, "..")) # .../genres-in-genres
 
 sys.path.insert(0, subproject_root) # For src.xxx
-sys.path.insert(0, project_root)    # For pipeline_mulan
 
 from src.library_manager import LibraryManager
 from src.extractor import MuLanFeatureExtractor

@@ -13,6 +13,7 @@ from typing import List, Dict, Any, Tuple, Optional
 from .core import ArtistCareer, StyleEmbedding, Track
 from .semantics import SemanticMapper
 from .metrics import MusicMetrics
+import warnings
 
 class StyleAnalyzer:
     """
@@ -76,7 +77,11 @@ class StyleAnalyzer:
                 raise ImportError(
                     "UMAP is unavailable. Install it with `pip install umap-learn`."
                 ) from exc
-            reducer = umap.UMAP(n_components=n_components, random_state=42)
+            
+            # Suppress the UserWarning about n_jobs being overridden by random_state
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*n_jobs value.*overridden.*")
+                reducer = umap.UMAP(n_components=n_components, random_state=42)
         else:
             raise ValueError(f"Unknown method: {method}")
             
@@ -169,7 +174,7 @@ class StyleAnalyzer:
             clusters[label].append(self.career.embeddings[idx].track_ref)
             
         # Optional: Name clusters using SemanticMapper
-        if self.mapper:
+        if self.mapper and self.mapper.has_embeddings:
             self._name_clusters(kmeans.cluster_centers_, clusters)
             
         return clusters
@@ -212,7 +217,7 @@ class StyleAnalyzer:
         
         # Innovation Insight
         if max_novelty_album != "N/A":
-             narrative.append(f"**Most Innovative Era**: The album *{max_novelty_album}* represents the sharpest departure from your previous discography (Novelty Score: {novelty[max_novelty_album]:.3f}).")
+             narrative.append(f"**Innovation Peak**: The album *{max_novelty_album}* represents the most significant departure from established patterns (Novelty Score: {novelty[max_novelty_album]:.3f}).")
         
         # Cohesion Insight
         # Find lowest cohesion (Experimental) vs highest (Focused)

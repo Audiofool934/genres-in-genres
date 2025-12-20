@@ -2,18 +2,23 @@
 
 This project enables fine-grained analysis of an artist's musical career by leveraging the **MuQ-MuLan** joint audio-text embedding space. It systematically extracts features from your music library, analyzes stylistic trajectories, and identifies "sub-genres" using unsupervised learning.
 
-## Key Features
+## 🌟 Key Features
 
 - **Professional Workflow**: Separation of Feature Extraction (batch script) and Interactive Analysis (Gradio App).
 - **Library Management**: Automatic scanning and caching of large music collections.
-- **Semantic Tagging**: Tags audio clusters with human-readable genres/moods using MuLan's shared embedding space. Tags are dynamically loaded from Music4All database instead of hardcoded lists.
+- **Smart Clustering**: Identifies sub-genres using K-Means. Includes **Auto-K selection** using Silhouette Score.
+- **Rich Visualizations**:
+    - **Style Trajectory**: 2D projection (PCA/t-SNE/UMAP) of career evolution with optional **Album Contours**.
+    - **Streamgraph**: Visualization of sub-genre intensity over time.
+    - **Semantic Radar**: Comparison of different eras/albums across semantic dimensions (e.g., Happy, Sad, Electronic).
+    - **Consistency Meter**: Analysis of stylistic variance within albums.
+- **Semantic Tagging**: Tags audio clusters with human-readable genres/moods using Music4All database tags.
 - **Mock Data Support**: Built-in simulators for rapid testing and development.
 
-## Directory Structure
-The project follows a clean, modular architecture:
+## 📂 Directory Structure
 
 ```
-genres_in_genres/
+genres-in-genres/
 ├── app.py                  # Main Interactive Application (Gradio)
 ├── run_demo.sh             # Setup and Startup Script
 ├── scripts/
@@ -21,40 +26,49 @@ genres_in_genres/
 ├── src/                    # Source Code Package
 │   ├── core.py             # Data Structures (ArtistCareer, Track)
 │   ├── library_manager.py  # File Scanning & Cache Management
-│   ├── extractor.py        # MuQ-MuLan Wrapper
+│   ├── extractor.py        # MuQ-MuLan Wrapper (Placeholder)
 │   ├── analysis.py         # Style Evolution & Clustering Logic
-│   ├── semantics.py        # Semantic Mapper (loads tags from Music4All)
+│   ├── semantics.py        # Semantic Mapper
 │   └── visualization.py    # Plotting Utilities
 └── data/
     ├── music/              # Put your mp3/wav files here
     ├── cache/              # Stores processed embeddings (.pkl)
     └── metadata/           # Music4All metadata CSV files
-        ├── id_tags.csv     # Tags for semantic mapping
-        ├── id_genres.csv   # Genre labels
-        ├── id_information.csv
-        ├── id_metadata.csv
-        └── id_lang.csv
 ```
 
-## Quick Start
+## 🚀 Quick Start
+
 ### 1. Setup Environment
+Ensure you have Python 3.8+ installed. The following script will create a virtual environment and install all dependencies (including `umap-learn`, `gradio`, `scikit-learn`, etc.):
 ```bash
+# This will install dependencies from requirements.txt automatically
 ./run_demo.sh
 ```
 
-### 2. Prepare Data (real mode)
+### 2. Prepare Data (Real Mode)
 Organize your music files as: `data/music/{Artist}/{Year}-{Album}/*.mp3`.
-Then run the pre-processing script:
+Then run the pre-processing script to extract embeddings:
 ```bash
-# Requires GPU and 'muq' installed
 source venv/bin/activate
 export PYTHONPATH=$PYTHONPATH:$(pwd)
-python3 docs/education/data_science/genres_in_genres/scripts/preprocess.py --device cuda
+# Ensure you have your extractor setup or use existing caches
+python3 scripts/preprocess.py --device cuda
 ```
 
 ### 3. Run Analysis
-Launch the app to visualize the results:
+Launch the interactive dashboard:
 ```bash
 ./run_demo.sh
 ```
-Select "Library Analysis" tab and choose your artist.
+1.  Navigate to the **Library** tab.
+2.  Select an artist from the dropdown (must be pre-processed).
+3.  Adjust parameters like **Dimensionality Reduction Method** (PCA, t-SNE, or **UMAP**) and **Clustering**.
+4.  Click **Analyze Library Data** to generate the report and plots.
+
+## 🛠 Requirements
+All dependencies are listed in `requirements.txt`. Key libraries include:
+- `torch` & `torchaudio`
+- `transformers`
+- `gradio` (UI)
+- `scikit-learn` & `umap-learn` (Analysis)
+- `matplotlib` & `seaborn` (Visualization)

@@ -23,24 +23,34 @@ from src.library_manager import LibraryManager
 
 # Global constants
 DATA_DIR = os.path.join(current_dir, "data/music")
-CACHE_DIR = os.path.join(current_dir, "data/cache")
-metadata_dir = os.path.join(current_dir, "data/metadata")
+CACHE_ROOT = os.path.join(current_dir, "data/cache")
+CACHE_TAGS_DIR = os.path.join(CACHE_ROOT, "tags")
+METADATA_DIR = os.path.join(current_dir, "data/metadata")
 
-LIBRARY_MANAGER = LibraryManager(DATA_DIR, CACHE_DIR)
+LIBRARY_MANAGER = LibraryManager(DATA_DIR, CACHE_ROOT)
 
-# Initialize semantic mapper
-from pipeline_mulan import MuQMuLanEncoder
-import torch
-# CUDA_VISIBLE_DEVICES is set in run_demo.sh
-# When CUDA_VISIBLE_DEVICES=7, physical GPU 7 becomes logical GPU 0
-device = "cuda:0" if torch.cuda.is_available() else "cpu"
-print(f"[App] Using device: {device} (CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')})")
-encoder = MuQMuLanEncoder(device=device)
-SEMANTIC_MAPPER = SemanticMapper(encoder=encoder, metadata_dir=metadata_dir, cache_dir=CACHE_DIR)
-SEMANTIC_MAPPER.initialize_tags(max_tags=2000)
+# Initialize semantic mapper from cache (no MuQ-MuLan dependency at runtime)
+SEMANTIC_MAPPER = None
+try:
+    _mapper = SemanticMapper(cache_dir=CACHE_TAGS_DIR, metadata_dir=METADATA_DIR)
+    _mapper.initialize_tags(max_tags=2000)
+    if _mapper.has_embeddings:
+        SEMANTIC_MAPPER = _mapper
+    else:
+        print("[App] Tag embeddings not found; semantic features disabled.")
+except Exception as exc:
+    print(f"[App] Semantic mapper unavailable: {exc}")
+    SEMANTIC_MAPPER = None
 
-# Global State for dynamic updates
-CURRENT_ANALYZER = None
+# Helper for session-safe analyzer retrieval (simplified for demo)
+# In a production app, this would be a cache indexed by session ID
+_ANALYZER_CACHE = {}
+
+def get_analyzer(session_id="default"):
+    return _ANALYZER_CACHE.get(session_id)
+
+def set_analyzer(analyzer, session_id="default"):
+    _ANALYZER_CACHE[session_id] = analyzer
 
 # --- Analysis Logic (Modified to return State) ---
 
@@ -94,8 +104,9 @@ def process_analysis(career, method="pca", n_clusters=3, radar_albums=None, rada
         figures: Tuple of plot objects.
     """
     global CURRENT_ANALYZER
-    analyzer = StyleAnalyzer(career, SEMANTIC_MAPPER)
-    CURRENT_ANALYZER = analyzer  # Store for dynamic radar updates
+    mapper = SEMANTIC_MAPPER if SEMANTIC_MAPPER and SEMANTIC_MAPPER.has_embeddings else None
+    analyzer = StyleAnalyzer(career, mapper)
+    set_analyzer(analyzer)  # Store for dynamic radar updates
 
     # 1. Clustering
     if auto_k:
@@ -120,15 +131,14 @@ def process_analysis(career, method="pca", n_clusters=3, radar_albums=None, rada
         
         # Explorer Label: Rich (Top-5)
         vecs = [t_emb.vector for t_emb in career.embeddings if t_emb.track_ref in tracks]
-        if vecs:
+        if vecs and mapper:
             centroid = np.mean(vecs, axis=0)
-            # Ensure we ask for k=5
-            tags = SEMANTIC_MAPPER.get_nearest_tags(centroid, k=5)
-            # Format: "Tag (0.85)" - tags is List[Tuple[str, float]], so t is tag_name, s is score
-            tag_str = ", ".join([f"{tag_name} ({score:.2f})" for tag_name, score in tags])
-            explorer_labels[cid] = f"C{cid}: {tag_str}"
-        else:
-            explorer_labels[cid] = f"C{cid}"
+            tags = mapper.get_nearest_tags(centroid, k=5)
+            if tags:
+                tag_str = ", ".join([f"{tag_name} ({score:.2f})" for tag_name, score in tags])
+                explorer_labels[cid] = f"C{cid}: {tag_str}"
+                continue
+        explorer_labels[cid] = f"C{cid}"
 
     # 3. Figures (Use plot_labels)
     fig_traj = GenreTrajectoryVisualizer.plot_2d_trajectory(
@@ -251,29 +261,6 @@ with gr.Blocks(title="Genres in Genres") as demo:
                     info="Number of sub-genre clusters (ignored if Auto-select K is enabled)"
                 )
             
-            # Radar Chart Customization
-            with gr.Accordion("🎯 Radar Chart Settings (Optional)", open=False):
-                radar_album_selector = gr.Dropdown(
-                    label="Select Albums for Radar Comparison",
-                    choices=[],
-                    multiselect=True,
-                    info="Select 2-4 albums to compare. Default: First and Last album"
-                )
-                
-                # Common semantic tags for radar chart
-                default_radar_tags = [
-                    "Happy", "Sad", "Energetic", "Calm", "Dark", "Bright", 
-                    "Romantic", "Aggressive", "Acoustic", "Electronic",
-                    "Rock", "Pop", "Jazz", "Classical", "Hip Hop", "Folk"
-                ]
-                radar_tag_selector = gr.Dropdown(
-                    label="Select Semantic Features (Tags)",
-                    choices=default_radar_tags,
-                    multiselect=True,
-                    value=["Happy", "Sad", "Energetic", "Calm", "Acoustic", "Electronic"],
-                    info="Select 3-8 semantic features to compare. Default: 6 common features"
-                )
-            
             analyze_btn = gr.Button("Analyze Library Data", variant="primary")
             
             # --- CALLBACKS ---
@@ -282,39 +269,21 @@ with gr.Blocks(title="Genres in Genres") as demo:
                 
             def update_albums_for_artist(artist_name):
                 """Loads artist and returns list of albums."""
-                print(f"[UI] Updating albums for artist: {artist_name}")
                 if not artist_name:
-                    return gr.update(choices=[], value=[]), gr.update(choices=[], value=[])
+                    return gr.update(choices=[], value=[])
                 
-                # Load temporarily to get metadata
                 career = LIBRARY_MANAGER.load_from_cache(artist_name)
                 if not career:
-                    print(f"[UI] No career found for {artist_name}")
-                    return gr.update(choices=[], value=[]), gr.update(choices=[], value=[])
+                    return gr.update(choices=[], value=[])
                     
-                # Extract unique albums sorted by date
-                # We need to sort by release date
-                unique_albums = []
-                # Helper to sort by date
-                # Note: tracks are sorting in career.tracks
                 seen = set()
+                unique_albums = []
                 for t in career.tracks:
                     if t.album not in seen:
                         unique_albums.append(t.album)
                         seen.add(t.album)
                 
-                print(f"[UI] Found {len(unique_albums)} albums: {unique_albums}")
-                # Select all by default for analysis, first and last for radar
-                radar_default = []
-                if len(unique_albums) >= 2:
-                    radar_default = [unique_albums[0], unique_albums[-1]]
-                elif len(unique_albums) == 1:
-                    radar_default = [unique_albums[0]]
-                
-                return (
-                    gr.update(choices=unique_albums, value=unique_albums, visible=True),
-                    gr.update(choices=unique_albums, value=radar_default, visible=True)
-                )
+                return gr.update(choices=unique_albums, value=unique_albums, visible=True)
 
             def update_cluster_max(selected_albums):
                 """Updates max K based on number of selected albums."""
@@ -367,14 +336,14 @@ with gr.Blocks(title="Genres in Genres") as demo:
                 
                 def update_radar_dynamic(selected_albums, selected_tags):
                     """Update radar chart dynamically."""
-                    global CURRENT_ANALYZER
-                    if not CURRENT_ANALYZER:
+                    analyzer = get_analyzer()
+                    if not analyzer:
                         return plt.figure()
                     if not selected_albums or len(selected_albums) == 0:
                         return plt.figure()
                     if not selected_tags or len(selected_tags) == 0:
                         return plt.figure()
-                    return CareerStoryteller.plot_radar(CURRENT_ANALYZER, selected_albums, tags=selected_tags)
+                    return CareerStoryteller.plot_radar(analyzer, selected_albums, tags=selected_tags)
                 
                 def update_radar_albums_from_state(state):
                     """Update radar album choices from analysis state."""
@@ -463,7 +432,7 @@ with gr.Blocks(title="Genres in Genres") as demo:
     artist_dropdown.change(
         update_albums_for_artist, 
         inputs=[artist_dropdown], 
-        outputs=[album_selector, radar_album_selector]
+        outputs=[album_selector]
     )
     
     album_selector.change(
@@ -481,7 +450,7 @@ with gr.Blocks(title="Genres in Genres") as demo:
     
     analyze_btn.click(
         run_library_analysis, 
-        inputs=[artist_dropdown, lib_method, lib_clusters, album_selector, radar_album_selector, radar_tag_selector, auto_k_checkbox, show_contours_checkbox], 
+        inputs=[artist_dropdown, lib_method, lib_clusters, album_selector, gr.State(None), gr.State(None), auto_k_checkbox, show_contours_checkbox], 
         outputs=outputs_list
     )
 

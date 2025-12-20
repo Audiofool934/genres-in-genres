@@ -18,10 +18,20 @@ class LibraryManager:
     """
     
     def __init__(self, music_root: str, cache_dir: str):
+        """
+        cache_dir can point to either the cache root (data/cache) or the music
+        cache subdir (data/cache/music). We resolve both for backward
+        compatibility with earlier layouts.
+        """
         self.music_root = music_root
-        self.cache_dir = cache_dir
-        
-        os.makedirs(cache_dir, exist_ok=True)
+        cache_base = os.path.abspath(cache_dir)
+        cache_music_dir = os.path.join(cache_base, "music")
+        # If user already passed .../cache/music, keep it; otherwise prefer the new layout.
+        if os.path.basename(cache_base) == "music" or os.path.isdir(cache_music_dir):
+            self.cache_dir = cache_music_dir if os.path.basename(cache_base) != "music" else cache_base
+        else:
+            self.cache_dir = cache_base
+        os.makedirs(self.cache_dir, exist_ok=True)
 
     def scan_artist(self, artist_name: str) -> ArtistCareer:
         """
@@ -82,13 +92,20 @@ class LibraryManager:
         """Loads an artist from cache."""
         filename = f"{artist_name}.pkl"
         path = os.path.join(self.cache_dir, filename)
-        if not os.path.exists(path):
-            return None
-            
-        with open(path, "rb") as f:
-            return pickle.load(f)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                return pickle.load(f)
+        # Fallback to legacy flat cache (data/cache/{artist}.pkl)
+        legacy_path = os.path.join(os.path.dirname(self.cache_dir), f"{artist_name}.pkl")
+        if os.path.exists(legacy_path):
+            with open(legacy_path, "rb") as f:
+                return pickle.load(f)
+        return None
 
     def list_cached_artists(self) -> List[str]:
         """Returns a list of artist names found in the cache."""
         files = glob.glob(os.path.join(self.cache_dir, "*.pkl"))
+        if not files:
+            legacy_dir = os.path.dirname(self.cache_dir)
+            files = glob.glob(os.path.join(legacy_dir, "*.pkl"))
         return [os.path.splitext(os.path.basename(f))[0] for f in files]
