@@ -1,74 +1,75 @@
-# Genres in Genres: Style Evolution Analysis
+# Genres in Genres
 
-This project enables fine-grained analysis of an artist's musical career by leveraging the **MuQ-MuLan** joint audio-text embedding space. It systematically extracts features from your music library, analyzes stylistic trajectories, and identifies "sub-genres" using unsupervised learning.
+Style evolution analysis for music collections using MuQ-MuLan embeddings.
 
-## 🌟 Key Features
+## Features
 
-- **Professional Workflow**: Separation of Feature Extraction (batch script) and Interactive Analysis (Gradio App).
-- **Library Management**: Automatic scanning and caching of large music collections.
-- **Smart Clustering**: Identifies sub-genres using K-Means. Includes **Auto-K selection** using Silhouette Score.
-- **Rich Visualizations**:
-    - **Style Trajectory**: 2D projection (PCA/t-SNE/UMAP) of career evolution with optional **Album Contours**.
-    - **Streamgraph**: Visualization of sub-genre intensity over time.
-    - **Semantic Radar**: Comparison of different eras/albums across semantic dimensions (e.g., Happy, Sad, Electronic).
-    - **Consistency Meter**: Analysis of stylistic variance within albums.
-- **Semantic Tagging**: Tags audio clusters with human-readable genres/moods using Music4All database tags.
-- **Mock Data Support**: Built-in simulators for rapid testing and development.
+- Automatic artist library scanning and caching
+- Sub-genre identification using K-Means clustering (with Auto-K)
+- 2D trajectory visualization (PCA/t-SNE/UMAP)
+- Semantic radar charts for album comparison
+- Streamgraph for temporal style distribution
 
-## 📂 Directory Structure
+## Installation
+
+```bash
+./run_demo.sh
+```
+
+This creates a virtual environment and installs dependencies.
+
+## Usage
+
+### 1. Preprocess Audio (Optional)
+
+If you have your own music files:
+
+```bash
+# Organize files as: data/music/{Artist}/{Year}-{Album}/*.mp3
+source venv/bin/activate
+pip install muq
+python scripts/preprocess.py --device cuda  # or mps/cpu
+```
+
+### 2. Run Dashboard
+
+```bash
+./run_demo.sh
+```
+
+Open the URL in browser, go to **Library** tab, select an artist, click **Analyze**.
+
+## Directory Structure
 
 ```
 genres-in-genres/
-├── app.py                  # Main Interactive Application (Gradio)
-├── run_demo.sh             # Setup and Startup Script
+├── app.py                  # Gradio application
+├── run_demo.sh             # Setup script
 ├── scripts/
-│   └── preprocess.py       # Batch Feature Extraction Script
-├── src/                    # Source Code Package
-│   ├── core.py             # Data Structures (ArtistCareer, Track)
-│   ├── library_manager.py  # File Scanning & Cache Management
-│   ├── extractor.py        # MuQ-MuLan Wrapper (Placeholder)
-│   ├── analysis.py         # Style Evolution & Clustering Logic
-│   ├── semantics.py        # Semantic Mapper
-│   └── visualization.py    # Plotting Utilities
+│   ├── preprocess.py       # Audio feature extraction
+│   ├── prepare_artist.py   # Library preparation
+│   ├── cache_tags.py       # Tag caching
+│   └── verify_semantics.py # Model verification
+├── src/
+│   ├── core.py             # Data structures
+│   ├── library_manager.py  # Cache management
+│   ├── muq.py              # MuQ-MuLan wrapper
+│   ├── analysis.py         # Clustering logic
+│   ├── semantics.py        # Semantic mapper
+│   ├── metrics.py          # Style metrics
+│   ├── mock_data.py        # Test data
+│   └── visualization.py    # Plotting
 └── data/
-    ├── music/              # Put your mp3/wav files here
-    ├── cache/              # Stores processed embeddings (.pkl)
-    └── metadata/           # Music4All metadata CSV files
+    ├── music/              # Input audio files
+    ├── cache/              # Cached embeddings
+    └── metadata/           # Music4All tags
 ```
 
-## 🚀 Quick Start
+## Requirements
 
-### 1. Setup Environment
-Ensure you have Python 3.8+ installed. The following script will create a virtual environment and install all dependencies (including `umap-learn`, `gradio`, `scikit-learn`, etc.):
-```bash
-# This will install dependencies from requirements.txt automatically
-./run_demo.sh
-```
-
-### 2. Prepare Data (Real Mode)
-Organize your music files as: `data/music/{Artist}/{Year}-{Album}/*.mp3`.
-Then run the pre-processing script to extract embeddings:
-```bash
-source venv/bin/activate
-export PYTHONPATH=$PYTHONPATH:$(pwd)
-# Ensure you have your extractor setup or use existing caches
-python3 scripts/preprocess.py --device cuda
-```
-
-### 3. Run Analysis
-Launch the interactive dashboard:
-```bash
-./run_demo.sh
-```
-1.  Navigate to the **Library** tab.
-2.  Select an artist from the dropdown (must be pre-processed).
-3.  Adjust parameters like **Dimensionality Reduction Method** (PCA, t-SNE, or **UMAP**) and **Clustering**.
-4.  Click **Analyze Library Data** to generate the report and plots.
-
-## 🛠 Requirements
-All dependencies are listed in `requirements.txt`. Key libraries include:
-- `torch` & `torchaudio`
-- `transformers`
-- `gradio` (UI)
-- `scikit-learn` & `umap-learn` (Analysis)
-- `matplotlib` & `seaborn` (Visualization)
+- Python 3.8+
+- torch, torchaudio
+- muq (MuQ-MuLan)
+- gradio
+- scikit-learn, umap-learn
+- matplotlib, seaborn

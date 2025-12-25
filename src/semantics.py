@@ -25,15 +25,17 @@ class SemanticMapper:
         self,
         cache_dir: str,
         metadata_dir: Optional[str] = None,
+        encoder=None,
     ):
         self.cache_dir = Path(cache_dir)
         self.metadata_dir = Path(metadata_dir) if metadata_dir else None
+        self.encoder = encoder
         self.tags: List[str] = []
         self.tag_embeddings: Optional[np.ndarray] = None
 
     @property
     def has_embeddings(self) -> bool:
-        return self.tag_embeddings is not None
+        return self.tag_embeddings is not None or self.encoder is not None
 
     def initialize_tags(self, max_tags: int = 2000, cache_filename: str = "tags_cache.pkl"):
         """
@@ -154,19 +156,39 @@ class SemanticMapper:
     def get_tag_vectors(self, tags: List[str]) -> Optional[np.ndarray]:
         """
         Returns normalized embedding vectors for the requested tags.
-        If embeddings are unavailable or any tag is missing, returns None.
+        If embeddings are unavailable or any tag is missing, tries to encode them
+        using the runtime encoder if available.
         """
-        if self.tag_embeddings is None:
-            return None
+        # Case 1: All tags in cache
+        if self.tag_embeddings is not None:
+            tag_to_idx: Dict[str, int] = {t: i for i, t in enumerate(self.tags)}
+            missing = [t for t in tags if t not in tag_to_idx]
+            
+            if not missing:
+                indices = [tag_to_idx[t] for t in tags]
+                return self.tag_embeddings[indices]
+        
+        # Case 2: Missing tags but have Encoder
+        if self.encoder:
+            print(f"[SemanticMapper] Encoding {len(tags)} tags on-the-fly...")
+            try:
+                # Encode all requested tags fresh to ensure consistency
+                vecs = self.encoder.encode(tags)
+                return self._l2_normalize(vecs)
+            except Exception as e:
+                print(f"[SemanticMapper] Encoding failed: {e}")
+                return None
 
-        tag_to_idx: Dict[str, int] = {t: i for i, t in enumerate(self.tags)}
-        missing = [t for t in tags if t not in tag_to_idx]
-        if missing:
-            print(f"[SemanticMapper] Missing tag embeddings for: {missing}")
+        # Case 3: Missing tags and No Encoder
+        if self.tag_embeddings is not None:
+            # We already identified missing tags in Case 1 block, if we are here it implies missing > 0
+            # Recalculate missing for clarity if we didn't store it, or just generic error
+            tag_to_idx = {t: i for i, t in enumerate(self.tags)}
+            missing = [t for t in tags if t not in tag_to_idx]
+            print(f"[SemanticMapper] Missing tag embeddings for: {missing} (and no encoder available)")
             return None
-
-        indices = [tag_to_idx[t] for t in tags]
-        return self.tag_embeddings[indices]
+            
+        return None
 
     def batch_annotate(self, embeddings: List[np.ndarray], k: int = 1) -> List[List[str]]:
         """Annotates a batch of embeddings with their top-k tags."""

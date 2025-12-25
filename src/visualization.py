@@ -59,6 +59,9 @@ class GenreTrajectoryVisualizer:
         clusters: Optional[Dict[int, List[Track]]] = None,
         cluster_labels: Optional[Dict[int, str]] = None,
         show_album_contours: bool = False,
+        show_cluster_contours: bool = False,  # NEW: Draw cluster boundaries
+        show_trajectory: bool = True,
+        show_album_centers: bool = True,
     ) -> Figure:
         """
         Plots a 2D scatter plot of the career trajectory, connecting chronological points.
@@ -129,49 +132,97 @@ class GenreTrajectoryVisualizer:
                                 zorder=1)  # Bottom layer
                 ax.add_patch(polygon)
         
+        # Draw cluster contours (convex hulls) - Layer 1.5 - Optional
+        if show_cluster_contours and clusters:
+            track_to_emb_idx = {emb.track_ref.file_path: idx for idx, emb in enumerate(analyzer.career.embeddings)}
+            sorted_cids = sorted(clusters.keys())
+            n_clusters = len(sorted_cids)
+            
+            # Use warm colors for clusters (distinct from album colors)
+            cluster_colors = plt.cm.Set1(np.linspace(0, 1, max(n_clusters, 3)))
+            
+            for i, cid in enumerate(sorted_cids):
+                track_list = clusters[cid]
+                pts = [X_2d[track_to_emb_idx[t.file_path]] for t in track_list if t.file_path in track_to_emb_idx]
+                
+                if len(pts) < 3:
+                    continue
+                    
+                pts_arr = np.vstack(pts)
+                
+                try:
+                    hull = ConvexHull(pts_arr)
+                    hull_points = pts_arr[hull.vertices]
+                    
+                    polygon = Polygon(hull_points, closed=True,
+                                    facecolor=cluster_colors[i],
+                                    alpha=0.12,  # Very transparent
+                                    edgecolor=cluster_colors[i],
+                                    linewidth=2.0,
+                                    linestyle='--',
+                                    zorder=1.5)
+                    ax.add_patch(polygon)
+                except Exception:
+                    # Degenerate hull (collinear points), skip
+                    pass
+        
         # Color by Time (Year) - only use tracks that have embeddings
         years = [emb.track_ref.year for emb in analyzer.career.embeddings]
         
-        # Scatter: Plot all individual tracks - Layer 2
-        scatter = ax.scatter(X_2d[:, 0], X_2d[:, 1], c=years, cmap='viridis', s=50, alpha=0.8, edgecolors='w', zorder=2)
-        plt.colorbar(scatter, label='Year')
+        # Scatter: Plot all individual tracks (Clusters) - Layer 2
+        # Now enabled/disabled by show_clusters
+        if show_clusters:
+            scatter = ax.scatter(X_2d[:, 0], X_2d[:, 1], c=years, cmap='viridis', s=50, alpha=0.8, edgecolors='w', zorder=2)
+            plt.colorbar(scatter, label='Year')
         
         # Connect trajectory: Only connect album centroids (not individual tracks)
         # This shows the evolution of style across albums, not individual songs - Layer 3
         if len(album_centroids) > 1:
             centroids_arr = np.array(album_centroids)
-            ax.plot(centroids_arr[:, 0], centroids_arr[:, 1], 
-                   c='gray', alpha=0.5, linestyle='--', linewidth=2, 
-                   marker='o', markersize=8, markerfacecolor='white', 
-                   markeredgecolor='gray', markeredgewidth=1.5,
-                   label='Album Trajectory', zorder=3)  # Above points
-             
-        for album, points in albums.items():
-            pts = np.array(points)
-            center = np.mean(pts, axis=0)
-            # Album labels: smaller font, italic, light blue background, very transparent
-            ax.text(
-                center[0],
-                center[1],
-                album,
-                fontsize=7,
-                fontweight='normal',
-                style='italic',
-                color='#2c3e50',  # Dark gray-blue text
-                alpha=0.7,
-                bbox=dict(
-                    facecolor='#e8f4f8',  # Light blue background
-                    alpha=0.3,  # Very transparent
-                    edgecolor='#3498db',  # Blue border
-                    linewidth=0.8,
-                    boxstyle='round,pad=0.3'
-                ),
-                ha='center',
-                va='center',
-            )
+            
+            # Line (Trajectory)
+            if show_trajectory:
+                ax.plot(centroids_arr[:, 0], centroids_arr[:, 1], 
+                       c='gray', alpha=0.5, linestyle='--', linewidth=2, 
+                       zorder=3)
+            
+            # Markers (Centers)
+            if show_album_centers:
+                ax.plot(centroids_arr[:, 0], centroids_arr[:, 1], 
+                       linestyle='None', # No line, just markers
+                       marker='o', markersize=8, markerfacecolor='white', 
+                       markeredgecolor='gray', markeredgewidth=1.5,
+                       label='Album Trajectory', zorder=3.1)
+
+         
+        # Album Labels
+        if show_album_centers:
+            for album, points in albums.items():
+                pts = np.array(points)
+                center = np.mean(pts, axis=0)
+                # Album labels: smaller font, italic, light blue background, very transparent
+                ax.text(
+                    center[0],
+                    center[1],
+                    album,
+                    fontsize=7,
+                    fontweight='normal',
+                    style='italic',
+                    color='#2c3e50',  # Dark gray-blue text
+                    alpha=0.7,
+                    bbox=dict(
+                        facecolor='#e8f4f8',  # Light blue background
+                        alpha=0.3,  # Very transparent
+                        edgecolor='#3498db',  # Blue border
+                        linewidth=0.8,
+                        boxstyle='round,pad=0.3'
+                    ),
+                    ha='center',
+                    va='center',
+                )
 
         # Annotate clusters (centroids) - Cluster/Genre labels
-        if clusters and show_clusters:
+        if clusters and cluster_labels:
             # Build index lookup: embedding index by track reference
             # Map track object id to embedding index
             track_to_emb_idx = {emb.track_ref.file_path: idx for idx, emb in enumerate(analyzer.career.embeddings)}
@@ -197,25 +248,27 @@ class GenreTrajectoryVisualizer:
                     label_x = center[0] - offset_x
                     label_y = center[1] - offset_y
                 
-                # Cluster labels: bold, orange-red tint, very transparent
-                ax.text(
-                    label_x,
-                    label_y,
-                    label,
-                    fontsize=7.5,
-                    fontweight='bold',
-                    color='#c0392b',  # Dark red text
-                    alpha=0.75,
-                    bbox=dict(
-                        facecolor='#fdeaa7',  # Light yellow-orange background
-                        alpha=0.25,  # Very transparent
-                        edgecolor='#e67e22',  # Orange border
-                        linewidth=1.0,
-                        boxstyle='round,pad=0.4'
-                    ),
-                    ha='center',
-                    va='center',
-                )
+                # Show labels if show_clusters is True OR if we just want labels? 
+                # Let's assume labels are part of the cluster visibility.
+                if show_clusters:
+                    ax.text(
+                        label_x,
+                        label_y,
+                        label,
+                        fontsize=7.5,
+                        fontweight='bold',
+                        color='#c0392b',  # Dark red text
+                        alpha=0.75,
+                        bbox=dict(
+                            facecolor='#fdeaa7',  # Light yellow-orange background
+                            alpha=0.25,  # Very transparent
+                            edgecolor='#e67e22',  # Orange border
+                            linewidth=1.0,
+                            boxstyle='round,pad=0.4'
+                        ),
+                        ha='center',
+                        va='center',
+                    )
 
         ax.set_title(f"Style Trajectory: {analyzer.career.artist_name} ({method.upper()})")
         ax.set_xlabel("Component 1")
@@ -495,13 +548,93 @@ class CareerStoryteller:
                 ha='center'
             )
         
-        ax.set_title("The Cohesion Meter: Album Consistency vs. Experimentation")
+        ax.set_title("The Cohesion Meter: Album Consistency vs. Experimentation", pad=30)
         ax.set_ylabel("Style Variance (Mean Cosine Dist)")
-        ax.set_ylim(bottom=0)
+        if final_values:
+            ax.set_ylim(0, max(final_values) * 1.25) # Give even more headroom
+        else:
+            ax.set_ylim(bottom=0)
         
         if len(final_albums) > 5:
             plt.xticks(rotation=45, ha='right')
             
+        sns.despine()
+        # Reserve top space for title to avoid it being pushed out or squeezed
+        plt.tight_layout(rect=[0, 0, 1, 0.9])
+        
+        return fig
+
+    @staticmethod
+    def plot_semantic_evolution(analyzer: StyleAnalyzer, tags: List[str]) -> Figure:
+        """
+        Plots the evolution of specific semantic tags across albums.
+        """
+        mapper = analyzer.mapper
+        if mapper is None or not mapper.has_embeddings:
+            fig = plt.figure(figsize=(10, 5))
+            plt.text(0.5, 0.5, "Semantic features unavailable", ha="center", va="center")
+            plt.axis("off")
+            return fig
+
+        tag_vecs = mapper.get_tag_vectors(tags)
+        if tag_vecs is None:
+            fig = plt.figure(figsize=(10, 5))
+            plt.text(0.5, 0.5, "Requested tags missing from cache", ha="center", va="center")
+            plt.axis("off")
+            return fig
+
+        # 1. Group embeddings by Album and sort by time
+        embeddings = analyzer.career.embeddings
+        album_data = {} # {album_name: [vectors]}
+        album_dates = {}
+        
+        for emb in embeddings:
+            album = emb.track_ref.album
+            if album not in album_data:
+                album_data[album] = []
+                album_dates[album] = emb.track_ref.release_date
+            album_data[album].append(emb.vector)
+            
+        # Sort albums
+        sorted_albums = sorted(album_data.keys(), key=lambda a: album_dates[a] or datetime.date.max)
+        
+        # 2. Compute Album Centroids
+        album_centroids = []
+        for album in sorted_albums:
+            vecs = np.stack(album_data[album])
+            center = np.mean(vecs, axis=0)
+            norm = np.linalg.norm(center)
+            if norm > 0:
+                center = center / norm
+            album_centroids.append(center)
+            
+        if not album_centroids:
+            return plt.figure()
+            
+        # 3. Compute Similarities: [n_albums, n_tags]
+        centroids_matrix = np.stack(album_centroids)
+        # tag_vecs: [n_tags, dim]
+        # sims: [n_albums, n_tags]
+        sims = centroids_matrix @ tag_vecs.T
+        
+        # 4. Plot
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # Colors: Use a high contrast colormap or distinct color loop
+        colors = plt.cm.tab10(np.linspace(0, 1, len(tags)))
+        
+        for i, tag in enumerate(tags):
+            ax.plot(sorted_albums, sims[:, i], marker='o', linewidth=2, label=tag, color=colors[i])
+            
+        ax.set_title("Semantic Evolution: Emotional Arc")
+        ax.set_ylabel("Activation Score (Similarity)")
+        ax.set_xlabel("Album (Chronological)")
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        
+        if len(sorted_albums) > 5:
+            plt.xticks(rotation=45, ha='right')
+            
+        ax.grid(True, linestyle='--', alpha=0.3)
         sns.despine()
         plt.tight_layout()
         

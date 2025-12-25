@@ -5,6 +5,9 @@ Allows users to:
 1. Visualize Mock Data (Simulation Mode).
 2. Analyze Pre-processed Music Libraries (Library Mode).
 """
+import warnings
+warnings.filterwarnings("ignore", message=".*weight_norm.*")
+warnings.filterwarnings("ignore", category=FutureWarning)
 import gradio as gr
 import os
 import sys
@@ -20,6 +23,7 @@ from src.analysis import StyleAnalyzer
 from src.semantics import SemanticMapper
 from src.visualization import GenreTrajectoryVisualizer, CareerStoryteller
 from src.library_manager import LibraryManager
+from src.muq import MuQTextEncoder
 
 # Global constants
 DATA_DIR = os.path.join(current_dir, "data/music")
@@ -30,14 +34,26 @@ METADATA_DIR = os.path.join(current_dir, "data/metadata")
 LIBRARY_MANAGER = LibraryManager(DATA_DIR, CACHE_ROOT)
 
 # Initialize semantic mapper from cache (no MuQ-MuLan dependency at runtime)
+# Initialize semantic mapper
+# 1. Try to load Encoder (Runtime)
+ENCODER = None
+try:
+    print("[App] Initializing MuQ-MuLan Text Encoder...")
+    ENCODER = MuQTextEncoder()
+    print("[App] Encoder ready.")
+except Exception as e:
+    print(f"[App] Failed to load encoder: {e}")
+    ENCODER = None
+
+# 2. Initialize Mapper
 SEMANTIC_MAPPER = None
 try:
-    _mapper = SemanticMapper(cache_dir=CACHE_TAGS_DIR, metadata_dir=METADATA_DIR)
+    _mapper = SemanticMapper(cache_dir=CACHE_TAGS_DIR, metadata_dir=METADATA_DIR, encoder=ENCODER)
     _mapper.initialize_tags(max_tags=2000)
     if _mapper.has_embeddings:
         SEMANTIC_MAPPER = _mapper
     else:
-        print("[App] Tag embeddings not found; semantic features disabled.")
+        print("[App] Semantic features disabled (no cache & no encoder).")
 except Exception as exc:
     print(f"[App] Semantic mapper unavailable: {exc}")
     SEMANTIC_MAPPER = None
@@ -68,14 +84,14 @@ def run_mock_analysis(artist_name, num_albums, method="pca"):
     )
     return process_analysis(career, method, n_clusters=3)
 
-def run_library_analysis(artist_name, method="pca", n_clusters=3, selected_albums=None, radar_albums=None, radar_tags=None, auto_k=False, show_album_contours=False):
+def run_library_analysis(artist_name, method="pca", n_clusters=3, selected_albums=None, radar_albums=None, radar_tags=None, auto_k=False, show_album_contours=False, show_cluster_contours=False, show_trajectory=True, show_album_centers=True, show_clusters=True):
     if not artist_name:
-        return None, *([None]*6)
+        return None, *([None]*7)
         
     # Load original full career
     full_career = LIBRARY_MANAGER.load_from_cache(artist_name)
     if not full_career:
-        return None, *([None]*6)
+        return None, *([None]*7)
 
     # Filter if specific albums selected
     if selected_albums and len(selected_albums) > 0:
@@ -85,7 +101,7 @@ def run_library_analysis(artist_name, method="pca", n_clusters=3, selected_album
         filtered_embeddings = [e for e in full_career.embeddings if e.track_ref.album in selected_albums]
         
         if not filtered_tracks:
-             return None, *([None]*6) # Should not happen if UI is consistent
+             return None, *([None]*7) # Should not happen if UI is consistent
 
         # Create new Career object for this analysis
         career = ArtistCareer(artist_name=full_career.artist_name)
@@ -94,9 +110,9 @@ def run_library_analysis(artist_name, method="pca", n_clusters=3, selected_album
     else:
         career = full_career
         
-    return process_analysis(career, method, n_clusters, radar_albums=radar_albums, radar_tags=radar_tags, auto_k=auto_k, show_album_contours=show_album_contours)
+    return process_analysis(career, method, n_clusters, radar_albums=radar_albums, radar_tags=radar_tags, auto_k=auto_k, show_album_contours=show_album_contours, show_cluster_contours=show_cluster_contours, show_trajectory=show_trajectory, show_album_centers=show_album_centers, show_clusters=show_clusters)
 
-def process_analysis(career, method="pca", n_clusters=3, radar_albums=None, radar_tags=None, auto_k=False, show_album_contours=False):
+def process_analysis(career, method="pca", n_clusters=3, radar_albums=None, radar_tags=None, auto_k=False, show_album_contours=False, show_cluster_contours=False, show_trajectory=True, show_album_centers=True, show_clusters=True):
     """
     Common analysis pipeline.
     Returns:
@@ -142,7 +158,9 @@ def process_analysis(career, method="pca", n_clusters=3, radar_albums=None, rada
 
     # 3. Figures (Use plot_labels)
     fig_traj = GenreTrajectoryVisualizer.plot_2d_trajectory(
-        analyzer, method=method, clusters=clusters, cluster_labels=plot_labels, show_album_contours=show_album_contours
+        analyzer, method=method, clusters=clusters, cluster_labels=plot_labels, 
+        show_album_contours=show_album_contours, show_cluster_contours=show_cluster_contours,
+        show_trajectory=show_trajectory, show_album_centers=show_album_centers, show_clusters=show_clusters
     )
     fig_stream = CareerStoryteller.plot_streamgraph(analyzer, clusters, cluster_labels=plot_labels)
     # Consistency doesn't technically use cluster labels but good consistency passing generic valid analyzer
@@ -187,7 +205,10 @@ def process_analysis(career, method="pca", n_clusters=3, radar_albums=None, rada
     report = analyzer.generate_career_report()
     report_md = report.get("markdown", "No data available.")
 
-    return state_data, fig_traj, fig_stream, fig_radar, fig_consistency, fig_composition, report_md
+    # Evolution Chart (Initial Default)
+    fig_evolution = CareerStoryteller.plot_semantic_evolution(analyzer, tags=["Happy", "Sad", "Energy", "Acoustic"])
+
+    return state_data, fig_traj, fig_stream, fig_radar, fig_evolution, fig_consistency, fig_composition, report_md
 
 # --- UI Renderer ---
 
@@ -244,11 +265,34 @@ with gr.Blocks(title="Genres in Genres") as demo:
                     label="Auto-select K (Optimal Clusters)", 
                     info="Automatically find optimal number of clusters using Silhouette Score"
                 )
-                # Album contours option
+            
+            with gr.Row():
+                # Visual Toggles
+                show_clusters_checkbox = gr.Checkbox(
+                    value=True,
+                    label="Show Clusters (Background)",
+                    info="Show individual track points colored by year"
+                )
                 show_contours_checkbox = gr.Checkbox(
                     value=False,
                     label="Show Album Contours",
-                    info="Display convex hull boundaries for each album (may be cluttered with many albums)"
+                    info="Display convex hull boundaries for each album"
+                )
+                show_cluster_contours_checkbox = gr.Checkbox(
+                    value=False,
+                    label="Show Cluster Contours",
+                    info="Display convex hull boundaries for each cluster/sub-genre"
+                )
+            with gr.Row():
+                show_trajectory_checkbox = gr.Checkbox(
+                    value=True,
+                    label="Show Trajectory Path",
+                    info="Connect album centroids with a chronological line"
+                )
+                show_centers_checkbox = gr.Checkbox(
+                    value=True,
+                    label="Show Album Centers",
+                    info="Show editable/movable markers for album centroids"
                 )
             
             with gr.Row():
@@ -327,10 +371,12 @@ with gr.Blocks(title="Genres in Genres") as demo:
                 )
                 radar_tags_dynamic = gr.Dropdown(
                     label="Select Semantic Features",
+                    # Add allow_custom_value=True to allow user typing
                     choices=["Happy", "Sad", "Energetic", "Calm", "Dark", "Bright", "Romantic", "Aggressive", "Acoustic", "Electronic", "Rock", "Pop", "Jazz", "Classical", "Hip Hop", "Folk"],
                     multiselect=True,
-                    value=["Happy", "Sad", "Energetic", "Calm", "Acoustic", "Electronic"],
-                    info="Select 3-8 semantic features"
+                    allow_custom_value=True, 
+                    value=["Happy", "Sad", "Energy", "Acoustic"],
+                    info="Select or Type custom semantic features (Press Enter to add new tags)"
                 )
                 update_radar_dynamic_btn = gr.Button("Update Radar Chart", variant="secondary")
                 
@@ -365,6 +411,35 @@ with gr.Blocks(title="Genres in Genres") as demo:
                     inputs=[analysis_state],
                     outputs=[radar_albums_dynamic]
                 )
+        
+        with gr.Column():
+            evolution_plot = gr.Plot(label="Semantic Evolution")
+            with gr.Accordion("📈 Explore Emotional Arc", open=False):
+                evo_tags_dynamic = gr.Dropdown(
+                    label="Select Emotions / Tones",
+                    choices=["Happy", "Sad", "Energetic", "Calm", "Dark", "Bright", "Romantic", "Aggressive", "Acoustic", "Electronic", "Rock", "Pop", "Jazz", "Classical", "Hip Hop", "Folk"],
+                    multiselect=True,
+                    allow_custom_value=True, # Also allow custom values here
+                    value=["Happy", "Sad", "Energy", "Acoustic"],
+                    info="Select tags to track evolution over time"
+                )
+                update_evo_btn = gr.Button("Update Evolution Chart", variant="secondary")
+                
+                def update_evolution_dynamic(selected_tags):
+                    """Update evolution chart dynamically."""
+                    analyzer = get_analyzer()
+                    if not analyzer:
+                        return plt.figure()
+                    if not selected_tags or len(selected_tags) == 0:
+                        return plt.figure()
+                    return CareerStoryteller.plot_semantic_evolution(analyzer, tags=selected_tags)
+                
+                update_evo_btn.click(
+                    update_evolution_dynamic,
+                    inputs=[evo_tags_dynamic],
+                    outputs=evolution_plot
+                )
+                        
         const_plot = gr.Plot(label="Consistency")
 
     # --- DYNAMIC EXPLORER ---
@@ -418,7 +493,7 @@ with gr.Blocks(title="Genres in Genres") as demo:
                 )
 
     # --- EVENT WIRING ---
-    outputs_list = [analysis_state, traj_plot, stream_plot, radar_plot, const_plot, comp_plot, insight_markdown]
+    outputs_list = [analysis_state, traj_plot, stream_plot, radar_plot, evolution_plot, const_plot, comp_plot, insight_markdown]
 
     mock_btn.click(
         run_mock_analysis,
@@ -450,7 +525,16 @@ with gr.Blocks(title="Genres in Genres") as demo:
     
     analyze_btn.click(
         run_library_analysis, 
-        inputs=[artist_dropdown, lib_method, lib_clusters, album_selector, gr.State(None), gr.State(None), auto_k_checkbox, show_contours_checkbox], 
+        inputs=[
+            artist_dropdown, lib_method, lib_clusters, album_selector, 
+            gr.State(None), gr.State(None),  # radar_albums, radar_tags
+            auto_k_checkbox, 
+            show_contours_checkbox,          # show_album_contours
+            show_cluster_contours_checkbox,  # show_cluster_contours
+            show_trajectory_checkbox,        # show_trajectory
+            show_centers_checkbox,           # show_album_centers
+            show_clusters_checkbox           # show_clusters
+        ], 
         outputs=outputs_list
     )
 
